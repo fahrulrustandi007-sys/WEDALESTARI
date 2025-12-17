@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Enviro Dashboard – Wedalestari</title>
+
+  <!-- Chart.js & Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <style>
+    :root {
+      --blue-water: #1e88e5;
+      --green-leaf: #2e7d32;
+      --text-main: #0d2b3e;
+    }
+
+    * { box-sizing: border-box; font-family: 'Segoe UI', system-ui, sans-serif; }
+
+    body {
+      margin: 0;
+      background: linear-gradient(180deg, #e3f2fd, #f1f8e9);
+      color: var(--text-main);
+      transition: background 0.6s ease;
+    }
+
+    body.alert { background: linear-gradient(180deg, #ffebee, #ffcdd2); }
+
+    header { padding: 24px 32px; font-weight: 700; font-size: 22px; }
+    main { padding: 24px 32px 120px; max-width: 1200px; margin: auto; }
+
+    .grid { display: grid; grid-template-columns: 2fr 1fr; gap: 24px; }
+
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      padding: 20px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.06);
+    }
+
+    .lestari {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      display: flex;
+      gap: 12px;
+      align-items: flex-end;
+      z-index: 999;
+    }
+
+    .lestari img {
+      width: 96px;
+      height: 96px;
+      display: block;
+      object-fit: none;
+      object-position: 0 0;
+      /* sprite ilustrasi halus, bukan pixel-art */
+      image-rendering: auto;
+      animation: float 2.5s ease-in-out infinite;
+    }
+
+    @keyframes float {
+      0% { transform: translateY(0); }
+      50% { transform: translateY(-8px); }
+      100% { transform: translateY(0); }
+    }
+
+    .lestari.worried img {
+      filter: drop-shadow(0 0 6px rgba(198,40,40,0.8));
+    }
+
+    .bubble {
+      background: white;
+      padding: 14px 18px;
+      border-radius: 16px;
+      max-width: 260px;
+      font-size: 14px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.15);
+    }
+
+    .status {
+      display: inline-block;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      background: #c8e6c9;
+      color: #1b5e20;
+      margin-top: 8px;
+    }
+
+    #mapHalmahera { width: 100%; height: 420px; border-radius: 12px; }
+  </style>
+</head>
+<body>
+
+<header>
+  WEDALESTARI <span style="color:#2e7d32">HIJAU</span>
+</header>
+
+<main>
+  <div class="card" style="margin-bottom:24px;">
+    <h3>Layer Visualisasi</h3>
+    <label><input type="checkbox" id="layerRain" checked /> Curah Hujan</label><br />
+    <label><input type="checkbox" id="layerTSS" checked /> Kekeruhan (TSS)</label>
+  </div>
+
+  <div class="grid">
+    <div class="card" style="grid-column: 1 / -1;">
+      <h3>Peta Pulau Halmahera</h3>
+      <div id="mapHalmahera"></div>
+    </div>
+
+    <div class="card" id="rainLayer">
+      <h3>Curah Hujan</h3>
+      <canvas id="rainChart"></canvas>
+    </div>
+
+    <div class="card" id="tssLayer">
+      <h3>Kekeruhan (TSS)</h3>
+      <canvas id="tssChart"></canvas>
+      <div class="status" id="tssStatus">Status: Hijau</div>
+    </div>
+  </div>
+</main>
+
+<div class="lestari" id="lestariActor">
+  <img id="lestariImg" alt="Lestari" />
+  <div class="bubble" id="lestariBubble">
+    Halo! Aku <b>Lestari</b> 🌿<br />
+    Sentuh titik merah untuk melihat kondisinya.
+  </div>
+</div>
+
+<script>
+// ================================
+// PENTING: pastikan DOM sudah siap
+// ================================
+document.addEventListener('DOMContentLoaded', () => {
+
+  const lestariImg = document.getElementById('lestariImg');
+  const bubble = document.getElementById('lestariBubble');
+  const lestariEl = document.getElementById('lestariActor');
+
+  if (!lestariImg) {
+    console.error('Element #lestariImg tidak ditemukan');
+    return;
+  }
+
+  // === KONFIGURASI SPRITE LESTARI ===
+  // WAJIB cocok dengan sprite sheet
+  const FRAME_SIZE = 96;   // ukuran 1 frame (px)
+  const FRAME_COUNT = 4; // pastikan sprite punya 4 frame horizontal   // jumlah frame horizontal (sesuai contoh burung)
+  let frame = 0;
+
+  // sprite sheet (harus 6 frame horizontal)
+  lestariImg.src = './lestari_sprite.png';
+
+  lestariImg.onerror = () => {
+    console.error('Sprite tidak ditemukan: cek path & nama file (case-sensitive)');
+  };
+
+  // animasi sprite (kepakan sayap)
+  // jika sprite benar, posisi akan bergeser per frame
+  setInterval(() => {
+    lestariImg.style.objectPosition = `-${frame * FRAME_SIZE}px 0px`;
+    frame = (frame + 1) % FRAME_COUNT;
+  }, 160);
+
+  function triggerLestariAlert(tss, name) {
+    document.body.classList.add('alert');
+    lestariEl.classList.add('worried');
+
+    let pesan = '';
+    let insight = '';
+    if (tss > 70) {
+      pesan = 'Air sangat keruh. Risiko tinggi bagi ekosistem sungai.';
+      insight = 'Biasanya terjadi setelah hujan lebat yang membawa sedimen.';
+    } else if (tss > 50) {
+      pesan = 'Kekeruhan meningkat. Perlu perhatian.';
+      insight = 'Ada indikasi limpasan awal, pantau 1–2 hari ke depan.';
+    } else {
+      pesan = 'Kondisi masih aman, tetap dipantau.';
+      insight = 'Ekosistem sungai masih stabil 🌿';
+    }
+
+    bubble.innerHTML = `⚠️ <b>Lestari khawatir!</b><br>${name}<br><b>TSS ${tss} mg/L</b><br/><i>${pesan}</i><br/><small>${insight}</small>`;
+
+    setTimeout(() => {
+      document.body.classList.remove('alert');
+      lestariEl.classList.remove('worried');
+      bubble.innerHTML = 'Aku akan terus memantau kondisi air 🌿';
+    }, 6000);
+  }
+
+  // ================================
+  // DATA & VISUAL
+  // ================================
+  new Chart(document.getElementById('rainChart'), {
+    type: 'line',
+    data: {
+      labels: ['Sen','Sel','Rab','Kam','Jum','Sab','Min'],
+      datasets: [{ data: [10,12,18,25,40,22,15], tension: 0.4, fill: true }]
+    },
+    options: { plugins: { legend: { display: false } } }
+  });
+
+  new Chart(document.getElementById('tssChart'), {
+    type: 'line',
+    data: {
+      labels: ['Jan','Feb','Mar','Apr','Mei'],
+      datasets: [{ data: [25,32,55,70,48], tension: 0.4, fill: true }]
+    },
+    options: { plugins: { legend: { display: false } } }
+  });
+
+  const map = L.map('mapHalmahera').setView([1.5, 128.0], 7);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+  const tssLayerGroup = L.layerGroup().addTo(map);
+
+  const marker = L.circleMarker([1.4, 128.1], {
+    radius: 12,
+    color: '#b71c1c',
+    fillColor: '#ef5350',
+    fillOpacity: 0.85
+  }).addTo(tssLayerGroup);
+
+  marker.on('click', () => triggerLestariAlert(70, 'Sungai Keruh'));
+
+});
+</script>
+</body>
+</html>
